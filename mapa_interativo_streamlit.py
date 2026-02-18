@@ -2,223 +2,231 @@
 import streamlit as st
 import pandas as pd
 import folium
+from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
-import math
+from math import radians, cos, sin, asin, sqrt
 
-st.set_page_config(layout="wide")
-st.title("Mapa Inteligente de Clientes e Técnicos")
+# =====================================================
+# CONFIGURAÇÃO DA PÁGINA
+# =====================================================
 
-# -------------------------
-# FUNÇÕES AUXILIARES
-# -------------------------
-def parse_latlon(value):
-    try:
-        lat, lon = str(value).split(",")
-        return float(lat.strip()), float(lon.strip())
-    except:
-        return None, None
+st.set_page_config(
+    page_title="Mapa Inteligente Operacional",
+    page_icon="🗺️",
+    layout="wide"
+)
+
+# =====================================================
+# ESTILO VISUAL PROFISSIONAL
+# =====================================================
+
+st.markdown("""
+<style>
+
+.main {
+    background-color: #f5f7fb;
+}
+
+section[data-testid="stSidebar"] {
+    background-color: #ffffff;
+    border-right: 1px solid #e6e9ef;
+}
+
+h1 {
+    font-weight: 700;
+    color: #1f2937;
+}
+
+.stMetric {
+    background-color: white;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.block-container {
+    padding-top: 2rem;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# =====================================================
+# FUNÇÕES
+# =====================================================
 
 def haversine(lat1, lon1, lat2, lon2):
-    R = 6371
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    """Calcula distância em KM"""
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+    km = 6371 * c
+    return km
 
-def detectar_coluna(df, palavras):
-    for col in df.columns:
-        nome = col.lower()
-        for p in palavras:
-            if p in nome:
-                return col
-    return None
+# =====================================================
+# SIDEBAR - UPLOAD DE DADOS
+# =====================================================
 
-# -------------------------
-# CARREGAR DADOS
-# -------------------------
-st.sidebar.header("Dados")
+st.sidebar.header("📂 Carregar Dados")
 
-clientes = pd.read_excel("clientes.xlsx")
-tecnicos = pd.read_excel("tecnicos.xlsx")
+arquivo_clientes = st.sidebar.file_uploader(
+    "Upload planilha CLIENTES",
+    type=["xlsx"]
+)
 
-clientes.columns = clientes.columns.str.strip()
-tecnicos.columns = tecnicos.columns.str.strip()
+arquivo_tecnicos = st.sidebar.file_uploader(
+    "Upload planilha TÉCNICOS",
+    type=["xlsx"]
+)
 
-# -------------------------
-# DETECTAR COLUNAS
-# -------------------------
-col_cliente = detectar_coluna(clientes, ["cliente", "empresa", "nome"])
-col_unidade = detectar_coluna(clientes, ["unidade", "filial"])
-col_frota = detectar_coluna(clientes, ["frota", "veiculo"])
-col_latlon_cliente = detectar_coluna(clientes, ["latitude", "lat"])
-
-col_nome_tecnico = detectar_coluna(tecnicos, ["nome"])
-col_endereco = detectar_coluna(tecnicos, ["endereco", "endereço"])
-col_latlon_tecnico = detectar_coluna(tecnicos, ["latitude", "lat"])
-
-# validação
-if not col_latlon_cliente or not col_latlon_tecnico:
-    st.error("Não encontrei colunas de latitude/longitude.")
+if not arquivo_clientes or not arquivo_tecnicos:
+    st.warning("Carregue as duas planilhas para iniciar.")
     st.stop()
 
-# -------------------------
-# COORDENADAS
-# -------------------------
-clientes[["lat","lon"]] = clientes[col_latlon_cliente].apply(lambda x: pd.Series(parse_latlon(x)))
-tecnicos[["lat","lon"]] = tecnicos[col_latlon_tecnico].apply(lambda x: pd.Series(parse_latlon(x)))
+df_clientes = pd.read_excel(arquivo_clientes)
+df_tecnicos = pd.read_excel(arquivo_tecnicos)
 
-clientes = clientes.dropna(subset=["lat","lon"])
-tecnicos = tecnicos.dropna(subset=["lat","lon"])
+# =====================================================
+# FILTROS
+# =====================================================
 
-# -------------------------
-# FILTROS CLIENTE + UNIDADE
-# -------------------------
-st.sidebar.header("Filtros")
+st.sidebar.header("🎯 Filtros")
 
-if col_cliente:
-    clientes_escolhidos = st.sidebar.multiselect(
-        "Clientes",
-        clientes[col_cliente].unique(),
-        default=list(clientes[col_cliente].unique())
-    )
-    clientes = clientes[clientes[col_cliente].isin(clientes_escolhidos)]
+clientes_sel = st.sidebar.multiselect(
+    "Clientes",
+    df_clientes["Cliente"].unique(),
+    default=df_clientes["Cliente"].unique()
+)
 
-if col_unidade:
-    unidades_escolhidas = st.sidebar.multiselect(
-        "Unidades",
-        clientes[col_unidade].unique(),
-        default=list(clientes[col_unidade].unique())
-    )
-    clientes = clientes[clientes[col_unidade].isin(unidades_escolhidas)]
+unidades_sel = st.sidebar.multiselect(
+    "Unidades",
+    df_clientes["Unidade"].unique(),
+    default=df_clientes["Unidade"].unique()
+)
 
-if col_nome_tecnico:
-    tecnicos_escolhidos = st.sidebar.multiselect(
-        "Técnicos",
-        tecnicos[col_nome_tecnico].unique(),
-        default=list(tecnicos[col_nome_tecnico].unique())
-    )
-    tecnicos = tecnicos[tecnicos[col_nome_tecnico].isin(tecnicos_escolhidos)]
+tecnicos_sel = st.sidebar.multiselect(
+    "Técnicos",
+    df_tecnicos["Nome"].unique(),
+    default=df_tecnicos["Nome"].unique()
+)
 
-# -------------------------
-# MAPA
-# -------------------------
-centro = [clientes["lat"].mean(), clientes["lon"].mean()]
-m = folium.Map(location=centro, zoom_start=5)
+df_clientes = df_clientes[
+    (df_clientes["Cliente"].isin(clientes_sel)) &
+    (df_clientes["Unidade"].isin(unidades_sel))
+]
 
-# clientes
-for _, row in clientes.iterrows():
-    html = f"""
-    <b>Cliente:</b> {row.get(col_cliente,'')}<br>
-    <b>Unidade:</b> {row.get(col_unidade,'')}<br>
-    <b>Frota:</b> {row.get(col_frota,'')}
-    """
-    folium.Marker(
-        location=[row["lat"], row["lon"]],
-        popup=html,
-        icon=folium.Icon(color="blue")
-    ).add_to(m)
+df_tecnicos = df_tecnicos[
+    df_tecnicos["Nome"].isin(tecnicos_sel)
+]
 
-# técnicos
-coords_tecnicos = []
-for _, row in tecnicos.iterrows():
-    coords_tecnicos.append((row["lat"], row["lon"], row))
-    html = f"""
-    <b>Técnico:</b> {row.get(col_nome_tecnico,'')}<br>
-    <b>Endereço:</b> {row.get(col_endereco,'')}
-    """
-    folium.Marker(
-        location=[row["lat"], row["lon"]],
-        popup=html,
-        icon=folium.Icon(color="green", icon="wrench")
-    ).add_to(m)
-
-map_data = st_folium(m, width=1200, height=650)
-
-# -------------------------
-# RAIO 200KM AO CLICAR TÉCNICO
-# -------------------------
-if map_data and map_data.get("last_clicked"):
-    click_lat = map_data["last_clicked"]["lat"]
-    click_lon = map_data["last_clicked"]["lng"]
-    
-    tecnico_encontrado = None
-    
-    for lat, lon, row in coords_tecnicos:
-        if abs(lat - click_lat) < 0.05 and abs(lon - click_lon) < 0.05:
-            tecnico_encontrado = row
-            break
-    
-    if tecnico_encontrado is not None:
-        st.success(f"Raio de atendimento do técnico: {tecnico_encontrado.get(col_nome_tecnico,'')}")
-        
-        m2 = folium.Map(location=[tecnico_encontrado["lat"], tecnico_encontrado["lon"]], zoom_start=7)
-        
-        folium.Circle(
-            location=[tecnico_encontrado["lat"], tecnico_encontrado["lon"]],
-            radius=200000,
-            color="red",
-            fill=True,
-            fill_opacity=0.2
-        ).add_to(m2)
-        
-        folium.Marker(
-            location=[tecnico_encontrado["lat"], tecnico_encontrado["lon"]],
-            icon=folium.Icon(color="green", icon="wrench")
-        ).add_to(m2)
-        
-        st.subheader("Área de cobertura do técnico (200km)")
-        st_folium(m2, width=1200, height=500)
-
-# -------------------------
+# =====================================================
 # DASHBOARD EXECUTIVO
-# -------------------------
-st.header("Dashboard Executivo")
+# =====================================================
 
-col1, col2, col3 = st.columns(3)
+st.title("Mapa Inteligente de Clientes e Técnicos")
 
-col1.metric("Total Clientes", len(clientes))
-col2.metric("Total Técnicos", len(tecnicos))
+st.subheader("📊 Visão Executiva")
 
-# distância média cliente -> técnico mais próximo
-distancias = []
+col1, col2, col3, col4 = st.columns(4)
 
-for _, cliente in clientes.iterrows():
-    menor = 999999
-    for _, tecnico in tecnicos.iterrows():
-        d = haversine(cliente["lat"], cliente["lon"], tecnico["lat"], tecnico["lon"])
-        if d < menor:
-            menor = d
-    distancias.append(menor)
+col1.metric("Clientes", len(df_clientes))
+col2.metric("Técnicos", len(df_tecnicos))
+col3.metric("Unidades", df_clientes["Unidade"].nunique())
+col4.metric("Raio padrão", "200 km")
 
-if distancias:
-    media = sum(distancias) / len(distancias)
+# =====================================================
+# MAPA BASE
+# =====================================================
+
+lat_centro = df_clientes["Latitude"].mean()
+lon_centro = df_clientes["Longitude"].mean()
+
+mapa = folium.Map(
+    location=[lat_centro, lon_centro],
+    zoom_start=6,
+    tiles="cartodbpositron"
+)
+
+cluster_clientes = MarkerCluster().add_to(mapa)
+
+# =====================================================
+# MARCAR CLIENTES
+# =====================================================
+
+for _, row in df_clientes.iterrows():
+    folium.Marker(
+        [row["Latitude"], row["Longitude"]],
+        popup=f"""
+        <b>Cliente:</b> {row["Cliente"]}<br>
+        <b>Unidade:</b> {row["Unidade"]}
+        """,
+        icon=folium.Icon(color="blue", icon="info-sign")
+    ).add_to(cluster_clientes)
+
+# =====================================================
+# SELEÇÃO DE TÉCNICO PARA RAIO
+# =====================================================
+
+st.sidebar.header("🎯 Cobertura")
+
+tecnico_raio = st.sidebar.selectbox(
+    "Selecionar técnico para ver cobertura 200km",
+    df_tecnicos["Nome"]
+)
+
+tec = df_tecnicos[df_tecnicos["Nome"] == tecnico_raio].iloc[0]
+
+# =====================================================
+# MARCAR TÉCNICOS
+# =====================================================
+
+for _, row in df_tecnicos.iterrows():
+
+    folium.Marker(
+        [row["Latitude"], row["Longitude"]],
+        popup=f"<b>Técnico:</b> {row['Nome']}",
+        icon=folium.Icon(color="green", icon="wrench", prefix="fa")
+    ).add_to(mapa)
+
+# =====================================================
+# DESENHAR RAIO 200KM
+# =====================================================
+
+folium.Circle(
+    location=[tec["Latitude"], tec["Longitude"]],
+    radius=200000,
+    color="red",
+    fill=True,
+    fill_opacity=0.08
+).add_to(mapa)
+
+# =====================================================
+# CLIENTES DENTRO DO RAIO
+# =====================================================
+
+clientes_proximos = []
+
+for _, c in df_clientes.iterrows():
+    dist = haversine(
+        tec["Latitude"], tec["Longitude"],
+        c["Latitude"], c["Longitude"]
+    )
+    if dist <= 200:
+        clientes_proximos.append(c)
+
+st.subheader("🎯 Clientes dentro do raio de 200km")
+
+if clientes_proximos:
+    st.dataframe(pd.DataFrame(clientes_proximos))
 else:
-    media = 0
+    st.info("Nenhum cliente dentro do raio.")
 
-col3.metric("Distância média cliente → técnico (km)", round(media,1))
+# =====================================================
+# EXIBIR MAPA
+# =====================================================
 
-# tabela melhores técnicos
-st.subheader("Melhor técnico por cliente")
+st.subheader("🗺️ Mapa Operacional")
 
-dados = []
-
-for _, cliente in clientes.iterrows():
-    melhor = None
-    menor = 999999
-    
-    for _, tecnico in tecnicos.iterrows():
-        d = haversine(cliente["lat"], cliente["lon"], tecnico["lat"], tecnico["lon"])
-        if d < menor:
-            menor = d
-            melhor = tecnico
-    
-    dados.append({
-        "Cliente": cliente.get(col_cliente,''),
-        "Unidade": cliente.get(col_unidade,''),
-        "Melhor Técnico": melhor.get(col_nome_tecnico,''),
-        "Distância (km)": round(menor,1)
-    })
-
-st.dataframe(pd.DataFrame(dados), use_container_width=True)
+st_folium(mapa, width=1400, height=700)
