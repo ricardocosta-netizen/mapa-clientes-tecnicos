@@ -145,7 +145,7 @@ for _, cliente in clientes_filtrados.iterrows():
         sugestoes.append({
             "Cliente": cliente["cliente"],
             "Unidade": cliente["unidade"],
-            "Melhor Técnico": melhor["Nome:"],
+            "Melhor Técnico": melhor["col_nome_tecnico:"],
             "Distância (km)": round(menor_dist, 1),
             "Tempo estimado (h)": round(tempo, 2)
         })
