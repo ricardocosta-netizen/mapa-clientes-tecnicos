@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import folium
@@ -39,47 +40,31 @@ def detectar_coluna(df, palavras):
 # -------------------------
 st.sidebar.header("Dados")
 
-clientes_file = st.sidebar.file_uploader("Atualizar base de CLIENTES", type=["xlsx"])
-tecnicos_file = st.sidebar.file_uploader("Atualizar base de TÉCNICOS", type=["xlsx"])
+clientes = pd.read_excel("clientes.xlsx")
+tecnicos = pd.read_excel("tecnicos.xlsx")
 
-if clientes_file:
-    clientes = pd.read_excel(clientes_file)
-else:
-    clientes = pd.read_excel("clientes.xlsx")
-
-if tecnicos_file:
-    tecnicos = pd.read_excel(tecnicos_file)
-else:
-    tecnicos = pd.read_excel("tecnicos.xlsx")
-
-# limpar nomes das colunas
 clientes.columns = clientes.columns.str.strip()
 tecnicos.columns = tecnicos.columns.str.strip()
 
 # -------------------------
-# DETECTAR COLUNAS CLIENTES
+# DETECTAR COLUNAS
 # -------------------------
 col_cliente = detectar_coluna(clientes, ["cliente", "empresa", "nome"])
 col_unidade = detectar_coluna(clientes, ["unidade", "filial"])
 col_frota = detectar_coluna(clientes, ["frota", "veiculo"])
 col_latlon_cliente = detectar_coluna(clientes, ["latitude", "lat"])
 
-# -------------------------
-# DETECTAR COLUNAS TECNICOS
-# -------------------------
 col_nome_tecnico = detectar_coluna(tecnicos, ["nome"])
 col_endereco = detectar_coluna(tecnicos, ["endereco", "endereço"])
 col_latlon_tecnico = detectar_coluna(tecnicos, ["latitude", "lat"])
 
 # validação
 if not col_latlon_cliente or not col_latlon_tecnico:
-    st.error("Não encontrei colunas de latitude/longitude nas planilhas.")
-    st.write("Clientes:", list(clientes.columns))
-    st.write("Técnicos:", list(tecnicos.columns))
+    st.error("Não encontrei colunas de latitude/longitude.")
     st.stop()
 
 # -------------------------
-# EXTRAIR COORDENADAS
+# COORDENADAS
 # -------------------------
 clientes[["lat","lon"]] = clientes[col_latlon_cliente].apply(lambda x: pd.Series(parse_latlon(x)))
 tecnicos[["lat","lon"]] = tecnicos[col_latlon_tecnico].apply(lambda x: pd.Series(parse_latlon(x)))
@@ -88,35 +73,42 @@ clientes = clientes.dropna(subset=["lat","lon"])
 tecnicos = tecnicos.dropna(subset=["lat","lon"])
 
 # -------------------------
-# FILTROS
+# FILTROS CLIENTE + UNIDADE
 # -------------------------
 st.sidebar.header("Filtros")
 
-selecionar_todos_clientes = st.sidebar.checkbox("Selecionar TODOS clientes", True)
-selecionar_todos_tecnicos = st.sidebar.checkbox("Selecionar TODOS técnicos", True)
+if col_cliente:
+    clientes_escolhidos = st.sidebar.multiselect(
+        "Clientes",
+        clientes[col_cliente].unique(),
+        default=list(clientes[col_cliente].unique())
+    )
+    clientes = clientes[clientes[col_cliente].isin(clientes_escolhidos)]
 
-if selecionar_todos_clientes or not col_cliente:
-    clientes_filtrados = clientes.copy()
-else:
-    lista_clientes = clientes[col_cliente].unique()
-    escolhidos = st.sidebar.multiselect("Cliente", lista_clientes)
-    clientes_filtrados = clientes[clientes[col_cliente].isin(escolhidos)]
+if col_unidade:
+    unidades_escolhidas = st.sidebar.multiselect(
+        "Unidades",
+        clientes[col_unidade].unique(),
+        default=list(clientes[col_unidade].unique())
+    )
+    clientes = clientes[clientes[col_unidade].isin(unidades_escolhidas)]
 
-if selecionar_todos_tecnicos or not col_nome_tecnico:
-    tecnicos_filtrados = tecnicos.copy()
-else:
-    lista_tecnicos = tecnicos[col_nome_tecnico].unique()
-    escolhidos = st.sidebar.multiselect("Técnico", lista_tecnicos)
-    tecnicos_filtrados = tecnicos[tecnicos[col_nome_tecnico].isin(escolhidos)]
+if col_nome_tecnico:
+    tecnicos_escolhidos = st.sidebar.multiselect(
+        "Técnicos",
+        tecnicos[col_nome_tecnico].unique(),
+        default=list(tecnicos[col_nome_tecnico].unique())
+    )
+    tecnicos = tecnicos[tecnicos[col_nome_tecnico].isin(tecnicos_escolhidos)]
 
 # -------------------------
 # MAPA
 # -------------------------
-centro = [clientes_filtrados["lat"].mean(), clientes_filtrados["lon"].mean()]
+centro = [clientes["lat"].mean(), clientes["lon"].mean()]
 m = folium.Map(location=centro, zoom_start=5)
 
 # clientes
-for _, row in clientes_filtrados.iterrows():
+for _, row in clientes.iterrows():
     html = f"""
     <b>Cliente:</b> {row.get(col_cliente,'')}<br>
     <b>Unidade:</b> {row.get(col_unidade,'')}<br>
@@ -129,7 +121,9 @@ for _, row in clientes_filtrados.iterrows():
     ).add_to(m)
 
 # técnicos
-for _, row in tecnicos_filtrados.iterrows():
+coords_tecnicos = []
+for _, row in tecnicos.iterrows():
+    coords_tecnicos.append((row["lat"], row["lon"], row))
     html = f"""
     <b>Técnico:</b> {row.get(col_nome_tecnico,'')}<br>
     <b>Endereço:</b> {row.get(col_endereco,'')}
@@ -140,37 +134,91 @@ for _, row in tecnicos_filtrados.iterrows():
         icon=folium.Icon(color="green", icon="wrench")
     ).add_to(m)
 
-st.subheader("Mapa")
-st_folium(m, width=1200, height=650)
+map_data = st_folium(m, width=1200, height=650)
 
 # -------------------------
-# MELHOR TECNICO
+# RAIO 200KM AO CLICAR TÉCNICO
 # -------------------------
-st.subheader("Sugestão automática do melhor técnico")
+if map_data and map_data.get("last_clicked"):
+    click_lat = map_data["last_clicked"]["lat"]
+    click_lon = map_data["last_clicked"]["lng"]
+    
+    tecnico_encontrado = None
+    
+    for lat, lon, row in coords_tecnicos:
+        if abs(lat - click_lat) < 0.05 and abs(lon - click_lon) < 0.05:
+            tecnico_encontrado = row
+            break
+    
+    if tecnico_encontrado is not None:
+        st.success(f"Raio de atendimento do técnico: {tecnico_encontrado.get(col_nome_tecnico,'')}")
+        
+        m2 = folium.Map(location=[tecnico_encontrado["lat"], tecnico_encontrado["lon"]], zoom_start=7)
+        
+        folium.Circle(
+            location=[tecnico_encontrado["lat"], tecnico_encontrado["lon"]],
+            radius=200000,
+            color="red",
+            fill=True,
+            fill_opacity=0.2
+        ).add_to(m2)
+        
+        folium.Marker(
+            location=[tecnico_encontrado["lat"], tecnico_encontrado["lon"]],
+            icon=folium.Icon(color="green", icon="wrench")
+        ).add_to(m2)
+        
+        st.subheader("Área de cobertura do técnico (200km)")
+        st_folium(m2, width=1200, height=500)
 
-velocidade_media = st.slider("Velocidade média (km/h)", 40, 120, 80)
+# -------------------------
+# DASHBOARD EXECUTIVO
+# -------------------------
+st.header("Dashboard Executivo")
 
-sugestoes = []
+col1, col2, col3 = st.columns(3)
 
-for _, cliente in clientes_filtrados.iterrows():
+col1.metric("Total Clientes", len(clientes))
+col2.metric("Total Técnicos", len(tecnicos))
+
+# distância média cliente -> técnico mais próximo
+distancias = []
+
+for _, cliente in clientes.iterrows():
+    menor = 999999
+    for _, tecnico in tecnicos.iterrows():
+        d = haversine(cliente["lat"], cliente["lon"], tecnico["lat"], tecnico["lon"])
+        if d < menor:
+            menor = d
+    distancias.append(menor)
+
+if distancias:
+    media = sum(distancias) / len(distancias)
+else:
+    media = 0
+
+col3.metric("Distância média cliente → técnico (km)", round(media,1))
+
+# tabela melhores técnicos
+st.subheader("Melhor técnico por cliente")
+
+dados = []
+
+for _, cliente in clientes.iterrows():
     melhor = None
     menor = 999999
     
-    for _, tecnico in tecnicos_filtrados.iterrows():
-        dist = haversine(cliente["lat"], cliente["lon"], tecnico["lat"], tecnico["lon"])
-        if dist < menor:
-            menor = dist
+    for _, tecnico in tecnicos.iterrows():
+        d = haversine(cliente["lat"], cliente["lon"], tecnico["lat"], tecnico["lon"])
+        if d < menor:
+            menor = d
             melhor = tecnico
     
-    if melhor is not None:
-        tempo = menor / velocidade_media
-        sugestoes.append({
-            "Cliente": cliente.get(col_cliente,''),
-            "Unidade": cliente.get(col_unidade,''),
-            "Melhor Técnico": melhor.get(col_nome_tecnico,''),
-            "Distância (km)": round(menor,1),
-            "Tempo estimado (h)": round(tempo,2)
-        })
+    dados.append({
+        "Cliente": cliente.get(col_cliente,''),
+        "Unidade": cliente.get(col_unidade,''),
+        "Melhor Técnico": melhor.get(col_nome_tecnico,''),
+        "Distância (km)": round(menor,1)
+    })
 
-if sugestoes:
-    st.dataframe(pd.DataFrame(sugestoes), use_container_width=True)
+st.dataframe(pd.DataFrame(dados), use_container_width=True)
