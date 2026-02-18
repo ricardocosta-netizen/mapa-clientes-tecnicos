@@ -64,9 +64,9 @@ else:
 if selecionar_todos_tecnicos:
     tecnicos_filtrados = tecnicos.copy()
 else:
-    lista_tecnicos = tecnicos["Nome:"].unique()
+    tecnicos.columns = tecnicos.columns.str.strip()
     tecnicos_escolhidos = st.sidebar.multiselect("Técnico", lista_tecnicos)
-    tecnicos_filtrados = tecnicos[tecnicos["Nome:"].isin(tecnicos_escolhidos)]
+    tecnicos_filtrados = tecnicos[tecnicos["col_nome_tecnico:"].isin(tecnicos_escolhidos)]
 
 # -------------------------
 # MAPA
