@@ -94,7 +94,7 @@ tecnicos_group = folium.FeatureGroup(name="Técnicos").add_to(m)
 
 for i, row in tecnicos_filtrados.iterrows():
     popup = f"""
-    <b>Técnico:</b> {row['Nome:']}<br>
+    <b>Técnico:</b> {row['col_nome_tecnico']}<br>
     <b>Endereço:</b> {row['Endereço:']}
     """
     
